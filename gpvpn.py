@@ -57,6 +57,10 @@ ADDRESS = re.compile(r"Connected as ([0-9a-fA-F.:]+)")
 #: "Session authentication will expire at Fri, 23 Oct 2026 02:38:56 CEST".
 EXPIRES = re.compile(r"Session authentication will expire at \w+, (\d+ \w+ \d+ [\d:]+)")
 IDLE = re.compile(r"Idle timeout is (\d+) minutes")
+#: fprintd's D-Bus names. sudo's pam_fprintd prompt never reaches us in time
+#: (sudo buffers it), so we ask fprintd whether a device waits for a finger.
+FPRINT = ["net.reactivated.Fprint", "/net/reactivated/Fprint/Device/0",
+          "net.reactivated.Fprint.Device"]
 
 
 def read_state() -> dict:
@@ -89,7 +93,8 @@ def current_state() -> dict:
     """The saved state, corrected to "off" when the runner is gone.
 
     While sudo waits for a password the state reads "password", with
-    `attempt` counting up after a wrong one.
+    `attempt` counting up after a wrong one. While sudo waits for a finger
+    instead, `fingerprint` holds the reader's name.
     """
     state = read_state()
     if state.get("state") not in (None, "off", "failed") and not alive(state.get("pid")):
@@ -101,9 +106,32 @@ def current_state() -> dict:
         request = None
     if request and alive(request.get("pid")) and alive(state.get("pid")):
         state = dict(state, state="password", attempt=request.get("attempt", 1))
+    elif state.get("state") == "connecting" and alive(state.get("pid")):
+        reader = finger_needed(state["pid"])
+        if reader:
+            state = dict(state, fingerprint=reader)
     if state.get("state") not in (None, "off", "failed"):
         state = dict(state, **session_limits())
     return state or {"state": "off"}
+
+
+def finger_needed(pid: int) -> str:
+    """The reader's name while our sudo waits for a finger, else ""."""
+    names = [name for _pid, name in descendants(pid)]
+    if "sudo" not in names or "openconnect" in names or not shutil.which("busctl"):
+        return ""
+
+    def get(prop: str) -> str:
+        try:
+            out = subprocess.run(["busctl", "--system", "get-property", *FPRINT, prop],
+                                 capture_output=True, text=True, timeout=2).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            return ""
+        return out.strip()
+
+    if get("finger-needed") != "b true":
+        return ""
+    return get("name").removeprefix("s ").strip('"') or "fingerprint reader"
 
 
 def load_settings() -> dict:

@@ -36,6 +36,8 @@ BarWidget {
   property string portalDraft: ""
 
   readonly property string phase: vpn.state || "off"
+  // fprintd's prompt while sudo waits for a finger, before it asks for the password.
+  readonly property string fingerprint: vpn.fingerprint || ""
   readonly property bool idle: phase === "off" || phase === "failed"
   readonly property bool pending: ["login", "password", "connecting", "waiting", "reconnecting",
     "disconnecting"].indexOf(phase) >= 0
@@ -56,7 +58,8 @@ BarWidget {
   })
 
   readonly property string statusLine: {
-    var text = phaseText[phase] || phase
+    var text = fingerprint !== "" && phase !== "password" ? "Waiting for the fingerprint"
+      : phaseText[phase] || phase
     if (pending) text += " · " + clock(now - pendingSince)
     if (phase === "ready" && vpn.transport) text += " over " + vpn.transport
     if (phase === "ready" && vpn.expires) text += " · until " + timeOfDay(vpn.expires)
@@ -225,7 +228,7 @@ BarWidget {
     tooltipText: "VPN: " + root.statusLine
     fontSize: Style.font.body
     dimmed: root.phase === "off"
-    active: root.phase === "failed" || root.phase === "password"
+    active: root.phase === "failed" || root.phase === "password" || root.fingerprint !== ""
 
     onPressed: function(button) { root.popupOpen = !root.popupOpen }
   }
@@ -453,6 +456,33 @@ BarWidget {
           color: root.phase === "ready" && !root.vpn.hip && !root.expiringSoon ? Qt.darker(root.bar.foreground, 1.5) : root.bar.urgent
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.caption
+        }
+
+        // ---------- Fingerprint (sudo asks before the password) ----------
+        Column {
+          width: parent.width
+          spacing: Style.space(2)
+          visible: root.fingerprint !== "" && root.phase !== "password"
+
+          Text {
+            textFormat: Text.PlainText
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: "Touch the fingerprint reader"
+            color: root.bar.urgent
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          Text {
+            textFormat: Text.PlainText
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: root.fingerprint
+            color: Qt.darker(root.bar.foreground, 1.5)
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+          }
         }
 
         // ---------- Root password ----------
